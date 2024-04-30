@@ -151,18 +151,8 @@
 + (UNNotificationAttachment *)attachmentFromDictionary:(NSDictionary *)attachmentDict {
   NSString *identifier = attachmentDict[@"id"];
   NSString *urlString = attachmentDict[@"url"];
-  NSURL *url;
 
-  if ([urlString hasPrefix:@"http://"] || [urlString hasPrefix:@"https://"]) {
-    // handle remote url by attempting to download attachement synchronously
-    url = [self downloadMediaSynchronously:urlString];
-  } else if ([urlString hasPrefix:@"/"]) {
-    // handle absolute file path
-    url = [NSURL fileURLWithPath:urlString];
-  } else {
-    // try to resolve local resource
-    url = [[NSBundle mainBundle] URLForResource:attachmentDict[@"url"] withExtension:nil];
-  }
+  NSURL *url = [self getURLFromString:urlString];
 
   if (url) {
     NSError *error;
@@ -187,6 +177,29 @@
 
   NSLog(@"NotifeeCore: Unable to resolve url for attachment: %@", attachmentDict);
   return nil;
+}
+
+/*
+ * get the URL from a string
+ *
+ * @param urlString NSString
+ * @return NSURL
+ */
++ (NSURL *)getURLFromString:(NSString *)urlString {
+  NSURL *url;
+
+  if ([urlString hasPrefix:@"http://"] || [urlString hasPrefix:@"https://"]) {
+    // handle remote url by attempting to download attachement synchronously
+    url = [self downloadMediaSynchronously:urlString];
+  } else if ([urlString hasPrefix:@"/"]) {
+    // handle absolute file path
+    url = [NSURL fileURLWithPath:urlString];
+  } else {
+    // try to resolve local resource
+    url = [[NSBundle mainBundle] URLForResource:urlString withExtension:nil];
+  }
+
+  return url;
 }
 
 /*
@@ -576,13 +589,54 @@
  *
  * @param request UNNotificationRequest
  */
-+ (NSDictionary *)parseUNNotificationRequest:(UNNotificationRequest *)request {
++ (NSMutableDictionary *)parseUNNotificationRequest:(UNNotificationRequest *)request {
   NSMutableDictionary *dictionary = [NSMutableDictionary dictionary];
-  NSMutableDictionary *iosDict = [NSMutableDictionary dictionary];
 
+  dictionary = [self parseUNNotificationContent:request.content];
   dictionary[@"id"] = request.identifier;
 
-  UNNotificationContent *content = request.content;
+  NSDictionary *userInfo = request.content.userInfo;
+
+  // Check for remote details
+  if ([request.trigger isKindOfClass:[UNPushNotificationTrigger class]]) {
+    NSMutableDictionary *remote = [NSMutableDictionary dictionary];
+
+    remote[@"messageId"] = userInfo[@"gcm.message_id"];
+    remote[@"senderId"] = userInfo[@"google.c.sender.id"];
+
+    if (userInfo[@"aps"] != nil) {
+      remote[@"mutableContent"] = userInfo[@"aps"][@"mutable-content"];
+      remote[@"contentAvailable"] = userInfo[@"aps"][@"content-available"];
+    }
+
+    dictionary[@"remote"] = remote;
+  }
+
+  dictionary[@"data"] = [self parseDataFromUserInfo:userInfo];
+
+  return dictionary;
+}
+
++ (NSMutableDictionary *)parseDataFromUserInfo:(NSDictionary *)userInfo {
+  NSMutableDictionary *data = [[NSMutableDictionary alloc] init];
+  for (id key in userInfo) {
+    // build data dict from remaining keys but skip keys that shouldn't be included in data
+    if ([key isEqualToString:@"aps"] || [key hasPrefix:@"gcm."] || [key hasPrefix:@"google."] ||
+        // notifee or notifee_options
+        [key hasPrefix:@"notifee"] ||
+        // fcm_options
+        [key hasPrefix:@"fcm"]) {
+      continue;
+    }
+    data[key] = userInfo[key];
+  }
+
+  return data;
+}
+
++ (NSMutableDictionary *)parseUNNotificationContent:(UNNotificationContent *)content {
+  NSMutableDictionary *dictionary = [NSMutableDictionary dictionary];
+  NSMutableDictionary *iosDict = [NSMutableDictionary dictionary];
 
   dictionary[@"subtitle"] = content.subtitle;
   dictionary[@"body"] = content.body;
@@ -627,22 +681,78 @@
     }
   }
 
-  // TODO: parse sound
-  //  if (content.sound != nil) {
-  //    iosDict[@"sound"] = content.sound;
-  //  }
+  if (content.attachments != nil) {
+    // TODO: parse attachments
+  }
 
-  // TODO: parse attachments
-  //  if (content.attachments != nil) {
-  //    iosDict[@"attachments"] =
-  //        [NotifeeCoreUtil DictionaryArrayToNotificationAttachments:content.attachments];
-  //  }
+  // sound
+  if (content.sound != nil) {
+    if ([content.sound isKindOfClass:[NSString class]]) {
+      iosDict[@"sound"] = content.sound;
+    } else if ([content.sound isKindOfClass:[NSDictionary class]]) {
+      NSDictionary *soundDict = content.sound;
+      NSMutableDictionary *notificationIOSSound = [[NSMutableDictionary alloc] init];
+
+      // ios.sound.name String
+      if (soundDict[@"name"] != nil) {
+        notificationIOSSound[@"name"] = soundDict[@"name"];
+      }
+
+      // sound.critical Boolean
+      if (soundDict[@"critical"] != nil) {
+        notificationIOSSound[@"critical"] = soundDict[@"critical"];
+      }
+
+      // ios.sound.volume Number
+      if (soundDict[@"volume"] != nil) {
+        notificationIOSSound[@"volume"] = soundDict[@"volume"];
+      }
+
+      // ios.sound
+      iosDict[@"sound"] = notificationIOSSound;
+    }
+  }
 
   dictionary[@"ios"] = iosDict;
-
   return dictionary;
 }
 
++ (INSendMessageIntent *)generateSenderIntentForCommunicationNotification:
+    (NSDictionary *)communicationInfo {
+  if (@available(iOS 15.0, *)) {
+    NSDictionary *sender = communicationInfo[@"sender"];
+    INPersonHandle *senderPersonHandle =
+        [[INPersonHandle alloc] initWithValue:sender[@"id"] type:INPersonHandleTypeUnknown];
+
+    // Parse sender's avatar
+    INImage *avatar = nil;
+    if (sender[@"avatar"] != nil) {
+      NSURL *url = [self getURLFromString:sender[@"avatar"]];
+      avatar = [INImage imageWithURL:url];
+    }
+
+    INPerson *senderPerson = [[INPerson alloc] initWithPersonHandle:senderPersonHandle
+                                                     nameComponents:nil
+                                                        displayName:sender[@"displayName"]
+                                                              image:avatar
+                                                  contactIdentifier:nil
+                                                   customIdentifier:nil];
+
+    INSendMessageIntent *intent =
+        [[INSendMessageIntent alloc] initWithRecipients:nil
+                                    outgoingMessageType:INOutgoingMessageTypeOutgoingMessageText
+                                                content:communicationInfo[@"body"]
+                                     speakableGroupName:nil
+                                 conversationIdentifier:communicationInfo[@"conversationId"]
+                                            serviceName:nil
+                                                 sender:senderPerson
+                                            attachments:nil];
+
+    return intent;
+  }
+
+  return nil;
+}
 /**
  * Returns a random string using UUID
  *

@@ -118,7 +118,7 @@ It's also possible to cancel all of your trigger notifications, by calling [canc
 The [`TimestampTrigger`](/react-native/reference/timestamptrigger) allows you to create a trigger that displays a notification at a specific time and date, using the property `timestamp` and an optional `repeatFrequency` property:
 
 ```js
-import notifee, { TimestampTrigger, TriggerType, TimeUnit } from '@notifee/react-native';
+import notifee, { TimestampTrigger, TriggerType, TimeUnit, AlarmType } from '@notifee/react-native';
 
 const trigger: TimestampTrigger = {
   type: TriggerType.TIMESTAMP,
@@ -132,17 +132,17 @@ On Android, you have the option to create your trigger notification with Android
 ```js
 const trigger: TimestampTrigger = {
   //...
-  alarmManager: true,
+  alarmManager: true, // uses android's `AlarmManagerCompat.setExact`
 };
 ```
 
-If you want to allow the notification to display when in low-power idle modes, set `allowWhileIdle`:
+If you want to allow the notification to display when in low-power idle modes, use `type` property:
 
 ```js
 const trigger: TimestampTrigger = {
   //...
   alarmManager: {
-    allowWhileIdle: true,
+    type: AlarmType.SET_EXACT_AND_ALLOW_WHILE_IDLE,
   },
 };
 ```
@@ -167,7 +167,7 @@ Please note, for iOS, a repeating trigger does not work the same as Android - th
 Starting from Android 12, timestamp triggers cannot be created unless user specfically allow the [exact alarm permission](https://developer.android.com/reference/android/Manifest.permission#SCHEDULE_EXACT_ALARM). Before you create a timestamp trigger, check whether `SCHEDULE_EXACT_ALARM` permission is allowed by making a call to `getNotificationSettings`. If ` alarm` is `DISABLED`, you should educate the user on this permission and ask to enable scheduling alarms. You can then use `openAlarmPermissionSettings` function to display the Alarms & Reminder settings of your app.
 
 ```js
-const settings = notifee.getNotificationSettings();
+const settings = await notifee.getNotificationSettings();
 if (settings.android.alarm == AndroidNotificationSetting.ENABLED) {
   //Create timestamp trigger
 } else {

@@ -16,7 +16,9 @@
  */
 
 #import <UIKit/UIKit.h>
+#import <dispatch/dispatch.h>
 
+#import "Intents/Intents.h"
 #import "NotifeeCore+UNUserNotificationCenter.h"
 #import "NotifeeCore.h"
 #import "NotifeeCoreDelegateHolder.h"
@@ -175,29 +177,54 @@
  * @param block notifeeMethodVoidBlock
  */
 + (void)displayNotification:(NSDictionary *)notification withBlock:(notifeeMethodVoidBlock)block {
-  UNMutableNotificationContent *content = [self buildNotificationContent:notification
-                                                             withTrigger:nil];
+  dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+    UNMutableNotificationContent *content = [self buildNotificationContent:notification
+                                                               withTrigger:nil];
 
-  UNNotificationRequest *request = [UNNotificationRequest requestWithIdentifier:notification[@"id"]
-                                                                        content:content
-                                                                        trigger:nil];
-  UNUserNotificationCenter *center = [UNUserNotificationCenter currentNotificationCenter];
+    UNUserNotificationCenter *center = [UNUserNotificationCenter currentNotificationCenter];
 
-  NSMutableDictionary *notificationDetail = [notification mutableCopy];
-  notificationDetail[@"remote"] = @NO;
+    NSMutableDictionary *notificationDetail = [notification mutableCopy];
+    notificationDetail[@"remote"] = @NO;
 
-  [center addNotificationRequest:request
-           withCompletionHandler:^(NSError *error) {
-             if (error == nil) {
-               [[NotifeeCoreDelegateHolder instance] didReceiveNotifeeCoreEvent:@{
-                 @"type" : @(NotifeeCoreEventTypeDelivered),
-                 @"detail" : @{
-                   @"notification" : notificationDetail,
+    if (@available(iOS 15.0, *)) {
+      if (notification[@"ios"][@"communicationInfo"] != nil) {
+        INSendMessageIntent *intent = [NotifeeCoreUtil
+            generateSenderIntentForCommunicationNotification:notification[@"ios"]
+                                                                         [@"communicationInfo"]];
+
+        // Use the intent to initialize the interaction.
+        INInteraction *interaction = [[INInteraction alloc] initWithIntent:intent response:nil];
+        interaction.direction = INInteractionDirectionIncoming;
+        [interaction donateInteractionWithCompletion:^(NSError *error) {
+          if (error)
+            NSLog(@"NotifeeCore: Could not donate interaction for communication notification: %@",
+                  error);
+        }];
+
+        content = [[content contentByUpdatingWithProvider:intent error:nil] mutableCopy];
+      }
+    }
+
+    UNNotificationRequest *request = [UNNotificationRequest requestWithIdentifier:notification[@"id"]
+                                                                          content:content
+                                                                          trigger:nil];
+
+    dispatch_async(dispatch_get_main_queue(), ^{
+      [center addNotificationRequest:request
+               withCompletionHandler:^(NSError *error) {
+                 if (error == nil) {
+                   [[NotifeeCoreDelegateHolder instance] didReceiveNotifeeCoreEvent:@{
+                     @"type" : @(NotifeeCoreEventTypeDelivered),
+                     @"detail" : @{
+                       @"notification" : notificationDetail,
+                     }
+                   }];
                  }
+                 block(error);
                }];
-             }
-             block(error);
-           }];
+    });
+  });
+  
 }
 
 /* Create a trigger notification .
@@ -209,37 +236,63 @@
 + (void)createTriggerNotification:(NSDictionary *)notification
                       withTrigger:(NSDictionary *)trigger
                         withBlock:(notifeeMethodVoidBlock)block {
-  UNMutableNotificationContent *content = [self buildNotificationContent:notification
-                                                             withTrigger:trigger];
-  UNNotificationTrigger *unTrigger = [NotifeeCoreUtil triggerFromDictionary:trigger];
+  
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+      UNMutableNotificationContent *content = [self buildNotificationContent:notification
+                                                                 withTrigger:trigger];
+      UNNotificationTrigger *unTrigger = [NotifeeCoreUtil triggerFromDictionary:trigger];
 
-  if (unTrigger == nil) {
-    // do nothing if trigger is null
-    return block(nil);
-  }
+      if (unTrigger == nil) {
+        // do nothing if trigger is null
+        return dispatch_async(dispatch_get_main_queue(), ^{
+          block(nil);
+        });
+      }
 
-  NSString *identifier = notification[@"id"];
+      UNUserNotificationCenter *center = [UNUserNotificationCenter currentNotificationCenter];
 
-  UNNotificationRequest *request = [UNNotificationRequest requestWithIdentifier:identifier
-                                                                        content:content
-                                                                        trigger:unTrigger];
-  UNUserNotificationCenter *center = [UNUserNotificationCenter currentNotificationCenter];
+      NSMutableDictionary *notificationDetail = [notification mutableCopy];
+      notificationDetail[@"remote"] = @NO;
 
-  NSMutableDictionary *notificationDetail = [notification mutableCopy];
-  notificationDetail[@"remote"] = @NO;
+      if (@available(iOS 15.0, *)) {
+        if (notification[@"ios"][@"communicationInfo"] != nil) {
+          INSendMessageIntent *intent = [NotifeeCoreUtil
+              generateSenderIntentForCommunicationNotification:notification[@"ios"]
+                                                                           [@"communicationInfo"]];
 
-  [center addNotificationRequest:request
-           withCompletionHandler:^(NSError *error) {
-             if (error == nil) {
-               [[NotifeeCoreDelegateHolder instance] didReceiveNotifeeCoreEvent:@{
-                 @"type" : @(NotifeeCoreEventTypeTriggerNotificationCreated),
-                 @"detail" : @{
-                   @"notification" : notificationDetail,
-                 }
-               }];
-             }
-             block(error);
-           }];
+          // Use the intent to initialize the interaction.
+          INInteraction *interaction = [[INInteraction alloc] initWithIntent:intent response:nil];
+          interaction.direction = INInteractionDirectionIncoming;
+          [interaction donateInteractionWithCompletion:^(NSError *error) {
+            if (error)
+              NSLog(@"NotifeeCore: Could not donate interaction for communication notification: %@",
+                    error);
+          }];
+
+          content = [[content contentByUpdatingWithProvider:intent error:nil] mutableCopy];
+        }
+      }
+
+      UNNotificationRequest *request = [UNNotificationRequest requestWithIdentifier:notification[@"id"]
+                                                                            content:content
+                                                                            trigger:unTrigger];
+
+      dispatch_async(dispatch_get_main_queue(), ^{
+        [center addNotificationRequest:request
+                 withCompletionHandler:^(NSError *error) {
+                   if (error == nil) {
+                     [[NotifeeCoreDelegateHolder instance] didReceiveNotifeeCoreEvent:@{
+                       @"type" : @(NotifeeCoreEventTypeTriggerNotificationCreated),
+                       @"detail" : @{
+                         @"notification" : notificationDetail,
+                       }
+                     }];
+                   }
+                   block(error);
+                 }];
+      });
+    });
+  
 }
 
 /**
@@ -677,7 +730,8 @@
 }
 
 + (void)getInitialNotification:(notifeeMethodNSDictionaryBlock)block {
-  block(nil, [[NotifeeCoreUNUserNotificationCenter instance] getInitialNotification]);
+  [NotifeeCoreUNUserNotificationCenter instance].initialNotificationBlock = block;
+  [[NotifeeCoreUNUserNotificationCenter instance] getInitialNotification];
 }
 
 + (void)setBadgeCount:(NSInteger)count withBlock:(notifeeMethodVoidBlock)block {

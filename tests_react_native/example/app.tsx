@@ -73,12 +73,12 @@ const channels: AndroidChannel[] = [
 ];
 
 async function onMessage(message: RemoteMessage): Promise<void> {
-  console.log('New FCM Message', message.messageId);
-  await Notifee.displayNotification({
-    title: 'onMessage',
-    body: `with message ${message.messageId}`,
-    android: { channelId: 'default', tag: 'hello1' },
-  });
+  console.log('New FCM Message', message.data);
+  // await Notifee.displayNotification({
+  //   title: 'onMessage',
+  //   body: `with message ${message.messageId}`,
+  //   android: { channelId: 'default', tag: 'hello1' },
+  // });
 }
 
 async function onBackgroundMessage(message: RemoteMessage): Promise<void> {
@@ -92,6 +92,7 @@ async function onBackgroundMessage(message: RemoteMessage): Promise<void> {
 
 firebase.messaging().setBackgroundMessageHandler(onBackgroundMessage);
 function Root(): any {
+  // @ts-ignore
   const [id, setId] = React.useState<string | null>(null);
 
   async function init(): Promise<void> {
@@ -102,6 +103,7 @@ function Root(): any {
     const initialNotification = await Notifee.getInitialNotification();
     console.log('init: ', { initialNotification });
     await Promise.all(channels.map($ => Notifee.createChannel($)));
+
     await Notifee.setNotificationCategories([
       {
         id: 'actions',
@@ -134,6 +136,16 @@ function Root(): any {
           },
         ],
       },
+      {
+        id: 'communications',
+        actions: [
+          {
+            id: 'communication',
+            title: 'test',
+            input: true,
+          },
+        ],
+      },
     ]);
   }
 
@@ -153,17 +165,7 @@ function Root(): any {
     }
     currentPermissions = await Notifee.getNotificationSettings();
     console.log('currentPermissions', currentPermissions);
-    await Notifee.setNotificationCategories([
-      {
-        id: 'stop',
-        actions: [
-          {
-            id: 'stop',
-            title: 'Dismiss',
-          },
-        ],
-      },
-    ]);
+
     if (Array.isArray(notification)) {
       Promise.all(notification.map($ => Notifee.displayNotification($))).catch(console.error);
     } else {
@@ -172,15 +174,21 @@ function Root(): any {
 
       const date = new Date(Date.now());
       date.setSeconds(date.getSeconds() + 15);
+      // @ts-ignore
       const trigger: TimestampTrigger = {
         type: 0,
         timestamp: date.getTime(),
         alarmManager: true,
         repeatFrequency: RepeatFrequency.HOURLY,
       };
-      Notifee.createTriggerNotification(notification, trigger)
-        .then(notificationId => setId(notificationId))
-        .catch(console.error);
+      // Notifee.createTriggerNotification(notification, trigger)
+      //   .then(notificationId => setId(notificationId))
+      //   .catch(console.error);
+      try {
+        await Notifee.displayNotification(notification);
+      } catch (e) {
+        console.log('DisplayNotification Error', e);
+      }
     }
   }
 
@@ -243,6 +251,12 @@ function Root(): any {
               console.log(await Notifee.openAlarmPermissionSettings());
             }}
           />
+          <Button
+            title={`Cancel all `}
+            onPress={async () => {
+              await Notifee.cancelAllNotifications();
+            }}
+          />
           {id != null && (
             <>
               <Button
@@ -261,12 +275,6 @@ function Root(): any {
                 title={`Cancel displayed ${id}`}
                 onPress={async () => {
                   if (id != null) await Notifee.cancelDisplayedNotification(id);
-                }}
-              />
-              <Button
-                title={`Cancel all `}
-                onPress={async () => {
-                  await Notifee.cancelDisplayedNotifications([id]);
                 }}
               />
             </>
@@ -477,6 +485,22 @@ function TestComponent(): any {
 AppRegistry.registerComponent('test_component', () => TestComponent);
 
 function FullScreenComponent(): any {
+  useEffect(() => {
+    (async () => {
+      await Notifee.displayNotification({
+        title: 'Testing SINGLE_TOP launch.',
+        body: 'Expand for a cat!',
+        android: {
+          channelId: 'high',
+          pressAction: {
+            id: 'default',
+            launchActivity: 'default',
+          },
+        },
+      });
+      console.log('displayed initialNotification');
+    })();
+  }, []);
   return (
     // eslint-disable-next-line react-native/no-inline-styles
     <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
