@@ -55,7 +55,7 @@ export const Content: React.FC<Props> = () => {
             "text": "With 12-month cultpasss ELITE testing is now completes"
           },
           // "smallIcon": "notify_logo",
-          "largeIcon": "https://curefit-content.s3.ap-south-1.amazonaws.com/prod/asset-manager/default/image/default/Group%20162%402x-1616417995961.png",
+          "largeIcon": "https://cdn-media.cure.fit/prod/asset-manager/default/image/default/Group%20162%402x-1616417995961.png",
           "sound": "default",
           "channelId": notification.android?.channelId || 'default',
           "pressAction": {
